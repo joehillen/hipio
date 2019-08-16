@@ -76,7 +76,7 @@ serveDNS domain port as nss email maybeES = withSocketsDo $ do
       (Just . show $ confPort conf)
   addrinfo <- maybe (fail "no addr info") return (listToMaybe addrinfos)
   let doit logger = do
-        forkIO $ doUDP addrinfo conf logger
+        _ <- forkIO $ doUDP addrinfo conf logger
         doTCP addrinfo conf logger
   case maybeES of
     Nothing -> withSimpleStdOutLogger doit
@@ -99,7 +99,7 @@ doUDP addrinfo conf logger =
     sock <- socket (addrFamily addrinfo) Datagram defaultProtocol
     bind sock (addrAddress addrinfo)
     forever $ do
-      (bs, addr) <- recvFrom sock (confBufSize conf)
+      (bs, addr) <- Network.Socket.ByteString.recvFrom sock (confBufSize conf)
       forkIO $ runLogT "UDP" logger $ handleUDP conf sock addr bs
 
 
@@ -149,17 +149,17 @@ handleRequest conf req = fromMaybe notFound go
         let name = qname q in
         case qtype q of
           A   ->
-            if (lowercase name) == (lowercase domain)
-            then Just . response ident q . map (recordA name 300) $ confAs conf
+            if lowercase name == lowercase domain
+            then Just . response req q . map (recordA name 300) $ confAs conf
             else do
-              ip <- parseDomain (confDomain conf) $ name
-              return . response ident q $ map (recordA name (confTTL conf)) [ip]
+              ipAddr <- parseDomain (confDomain conf) name
+              return . response req q $ map (recordA name (confTTL conf)) [ipAddr]
           NS  ->
-            if (lowercase domain) `B8.isSuffixOf` (lowercase name)
-            then Just . response ident q . map (recordNS name 300) $ confNSs conf
+            if lowercase domain `B8.isSuffixOf` lowercase name
+            then Just . response req q . map (recordNS name 300) $ confNSs conf
             else Nothing
           SOA ->
-            Just $ response ident q [recordSOA name (head $ confNSs conf) (confSOAemail conf)]
+            Just $ response req q [recordSOA name (head $ confNSs conf) (confSOAemail conf)]
           _  -> Nothing
 
 
@@ -175,8 +175,8 @@ handleUDP conf@Conf{..} sock addr bs =
       logAttention "Failed to decode message" $
         object
         [ "from" .= show addr
-        , "reason" .= reason
-        , "message" .= (decodeUtf8 $ B64.encode bs)
+        , "reason" .= show reason
+        , "message" .= decodeUtf8 (B64.encode bs)
         , "server" .= confHostname
         ]
 
@@ -211,15 +211,15 @@ handleTCP conf@Conf{..} sock addr = do
 
 
 logDNS :: Conf -> SockAddr -> DNSMessage -> DNSMessage -> LogT IO ()
-logDNS conf addr req rsp = do
+logDNS conf addr req rsp =
   case answer rsp of
     [] -> return ()
-    (ResourceRecord { rdata = (RD_A ip) }):_ ->
+    ResourceRecord { rdata = (RD_A ipAddr) }:_ ->
       logInfo "" $
         object
         [ "from" .= show addr
         , "question" .= (decodeUtf8 . qname . head . question $ req)
-        , "answer" .= show ip
+        , "answer" .= show ipAddr
         , "server" .= confHostname conf
         ]
     _ -> return ()
@@ -229,7 +229,7 @@ timeout' :: SockAddr -> Int -> IO a -> LogT IO (Maybe a)
 timeout' addr tm io = do
   result <- liftIO $ timeout tm io
   when (isNothing result) $
-    logAttention_ $ "timeout sending to "<>(T.pack $ show addr)
+    logAttention_ $ "timeout sending to "<>T.pack (show addr)
   return result
 
 
@@ -303,7 +303,8 @@ recordSOA dom ns email =
   , rdata = RD_SOA ns email 1 10800 3600 604800 3600
   }
 
-ctype_lower = listArray (0,255) (map (BI.c2w . toLower) ['\0'..'\255']) :: UArray Word8 Word8
+ctypeLower :: UArray Word8 Word8
+ctypeLower = listArray (0,255) (map (BI.c2w . toLower) ['\0'..'\255']) :: UArray Word8 Word8
 
 lowercase :: S.ByteString -> S.ByteString
-lowercase = S.map (\x -> ctype_lower!x)
+lowercase = S.map (\x -> ctypeLower!x)
