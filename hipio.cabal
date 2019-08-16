@@ -1,5 +1,5 @@
 name:                hipio
-version:             0.2.3
+version:             0.3.0
 synopsis:            A wildcard DNS for any IP address
 description:         Please see README.md
 homepage:            https://github.com/joehillen/hipio
