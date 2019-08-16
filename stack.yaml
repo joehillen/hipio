@@ -1,14 +1,6 @@
-resolver: lts-7.12
+snapshot: lts-14.1
 packages:
-- '.'
-- location:
-    git: https://github.com/scrive/log.git
-    commit: 5298533b243869220ee585f89187500aba54093f
-  subdirs:
-  - log-elasticsearch
-  extra-dep: true
+- .
 extra-deps:
-- log-base-0.7
-- bloodhound-0.12.0.0
-- hpqtypes-1.5.1.1
+- log-elasticsearch-0.10.1.0
 compiler-check: newer-minor

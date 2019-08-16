@@ -1,15 +1,13 @@
 name:                hipio
-version:             0.2.2
-synopsis:            Initial project template from stack
+version:             0.2.3
+synopsis:            A wildcard DNS for any IP address
 description:         Please see README.md
-homepage:            https://github.com/elastic/hipio
-license:             BSD3
+homepage:            https://github.com/joehillen/hipio
+license:             MIT
 license-file:        LICENSE
 author:              Joe Hillenbrand
-maintainer:          joehillen@elastic.co
+maintainer:          joehillen@gmail.com
 copyright:           MIT
-category:            Web
-build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
@@ -68,4 +66,4 @@ test-suite hipio-test
 
 source-repository head
   type:     git
-  location: https://github.com/elastic/hipio
+  location: https://github.com/joehillen/hipio
