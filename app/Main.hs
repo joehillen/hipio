@@ -4,8 +4,8 @@ module Main where
 import qualified Data.ByteString.Char8 as B8
 import           Data.Text             (Text)
 import qualified Data.Text             as T
-import           Database.Bloodhound   (EsPassword (..), EsUsername (..))
-import           Lib
+import           Database.V5.Bloodhound (EsPassword (..), EsUsername (..))
+import           Lib (serveDNS)
 import           Options.Applicative
 import           Options.Applicative.Text (textOption)
 import           System.Environment

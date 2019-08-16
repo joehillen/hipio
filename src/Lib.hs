@@ -5,38 +5,33 @@ module Lib
 , Conf(..)
 ) where
 
-import           Control.Applicative
 import           Control.Concurrent
-import           Control.Exception.Safe     (SomeException, bracketOnError,
-                                             catchAny, handle, tryAny)
+import           Control.Exception.Safe  (SomeException, bracketOnError,
+                                          catchAny, handle, tryAny)
 import           Control.Monad
-import           Control.Monad.IO.Class     (liftIO)
+import           Control.Monad.IO.Class (liftIO)
 import           Data.Array.Unboxed
-import qualified Data.ByteString            as S
-import qualified Data.ByteString.Base64     as B64
-import           Data.ByteString.Builder
-import qualified Data.ByteString.Char8      as B8
-import qualified Data.ByteString.Internal   as BI
-import qualified Data.ByteString.Lazy       as SL
-import           Data.Char                  (toLower)
-import           Data.Conduit.Attoparsec    (ParseError (..))
+import qualified Data.ByteString as S
+import qualified Data.ByteString.Base64 as B64
+import qualified Data.ByteString.Char8 as B8
+import qualified Data.ByteString.Internal as BI
+import           Data.Char (toLower)
+import           Data.Conduit.Attoparsec (ParseError (..))
 import           Data.IP
 import           Data.Maybe
-import           Data.Monoid
-import           Data.Text                  (Text (..))
-import qualified Data.Text                  as T
-import           Data.Text.Encoding         (decodeUtf8)
+import           Data.Text (Text)
+import qualified Data.Text as T
+import           Data.Text.Encoding (decodeUtf8)
 import           Data.Word
-import           Database.Bloodhound        (EsPassword, EsUsername)
+import           Database.V5.Bloodhound (EsPassword, EsUsername)
 import           Log
-import           Log.Backend.ElasticSearch
+import           Log.Backend.ElasticSearch.V5
 import           Log.Backend.StandardOutput
-import           Network.BSD
-import           Network.DNS
-import           Network.Socket             hiding (recvFrom)
+import           Network.HostName (getHostName)
+import           Network.DNS as DNS
+import           Network.Socket
 import           Network.Socket.ByteString
-import           System.Environment
-import           System.Random              (randomIO)
+import           System.Random (randomIO)
 import           System.Timeout
 
 import           Parse
@@ -44,7 +39,7 @@ import           Parse
 
 data Conf = Conf
   { confBufSize  :: !Int
-  , confTTL      :: !Int
+  , confTTL      :: !TTL
   , confDomain   :: !Domain
   , confTimeout  :: !Int
   , confPort     :: !Int
@@ -138,32 +133,14 @@ handleRequest conf req = fromMaybe notFound go
  where
   domain = confDomain conf<>"."
 
-  ident = identifier . header $ req
-
   notFound =
-    DNSMessage
-    { header     =
-        DNSHeader
-        { identifier = ident
-        , flags =
-            DNSFlags
-            { qOrR         = QR_Response
-            , opcode       = OP_STD
-            , authAnswer   = False
-            , trunCation   = False
-            , recDesired   = True
-            , recAvailable = False
-            , rcode        = NoErr
-            , authenData   = False
-            }
-        }
+    (defaultResponse' req)
+    { header = (defaultHeader req)
+               { flags = (flags (defaultHeader req))
+                         { authAnswer = False }
+               }
     , question   = question req
-    , answer     = []
-    , authority  = []
-    , additional = []
     }
-
-  setTTL ttl rr = rr { rrttl = ttl }
 
   go =
     case listToMaybe $ question req of
@@ -188,10 +165,10 @@ handleRequest conf req = fromMaybe notFound go
 
 handleUDP :: Conf -> Socket -> SockAddr -> S.ByteString -> LogT IO ()
 handleUDP conf@Conf{..} sock addr bs =
-  case decode $ SL.fromChunks [bs] of
+  case DNS.decode bs of
     Right req -> do
       let rsp = handleRequest conf req
-      let packet = mconcat . SL.toChunks $ encode rsp
+      let packet = DNS.encode rsp
       void $ timeout' addr confTimeout $ sendAllTo sock packet addr
       logDNS conf addr req rsp
     Left reason ->
@@ -218,11 +195,7 @@ handleTCP conf@Conf{..} sock addr = do
     Right Nothing -> return ()
     Right (Just req) -> do
       let rsp = handleRequest conf req
-      let bs = encode rsp
-      let packet = mconcat . SL.toChunks . toLazyByteString $
-                     word16BE (fromIntegral (SL.length bs)) <>
-                     lazyByteString bs
-      void $ timeout' addr confTimeout $ sendAll sock packet
+      void $ timeout' addr confTimeout $ DNS.sendAll sock $ DNS.encode rsp
       logDNS conf addr req rsp
   liftIO $ close sock
  where
@@ -260,10 +233,10 @@ timeout' addr tm io = do
   return result
 
 
-defaultHeader :: Int -> DNSHeader
-defaultHeader ident =
+defaultHeader :: DNSMessage -> DNSHeader
+defaultHeader req =
   DNSHeader
-  { identifier = ident
+  { identifier = identifier . header $ req
   , flags =
       DNSFlags
       { qOrR         = QR_Response
@@ -274,14 +247,16 @@ defaultHeader ident =
       , recAvailable = False
       , rcode        = NoErr
       , authenData   = False
+      , chkDisable   = chkDisable . flags . header $ req
       }
   }
 
 
-defaultResponse :: Int -> DNSMessage
-defaultResponse ident =
+defaultResponse' :: DNSMessage -> DNSMessage
+defaultResponse' req =
   DNSMessage
-  { header     = defaultHeader ident
+  { header     = defaultHeader req
+  , ednsHeader = EDNSheader defaultEDNS
   , question   = []
   , answer     = []
   , authority  = []
@@ -289,24 +264,44 @@ defaultResponse ident =
   }
 
 
-response :: Int -> Question -> [ResourceRecord] -> DNSMessage
-response ident q an =
-  (defaultResponse ident)
+response :: DNSMessage -> Question -> [ResourceRecord] -> DNSMessage
+response req q answer =
+  (defaultResponse' req)
   { question = [q]
-  , answer = an
+  , answer = answer
   }
 
 
-recordA :: Domain -> Int -> IPv4 -> ResourceRecord
-recordA dom ttl ip = ResourceRecord dom A ttl $ RD_A ip
+recordA :: Domain -> TTL -> IPv4 -> ResourceRecord
+recordA dom ttl a =
+  ResourceRecord
+  { rrclass = classIN
+  , rrname = dom
+  , rrtype = A
+  , rrttl = ttl
+  , rdata = RD_A a
+  }
 
 
-recordNS :: Domain -> Int -> Domain -> ResourceRecord
-recordNS dom ttl domain = ResourceRecord dom NS ttl $ RD_NS domain
-
+recordNS :: Domain -> TTL -> Domain -> ResourceRecord
+recordNS dom ttl domain =
+  ResourceRecord
+  { rrclass = classIN
+  , rrname = dom
+  , rrtype = NS
+  , rrttl = ttl
+  , rdata = RD_NS domain
+  }
 
 recordSOA :: Domain -> Domain -> Domain -> ResourceRecord
-recordSOA dom ns email = ResourceRecord dom SOA 432000 $ RD_SOA ns email 1 10800 3600 604800 3600
+recordSOA dom ns email =
+  ResourceRecord
+  { rrclass = classIN
+  , rrname = dom
+  , rrtype = SOA
+  , rrttl = 432000
+  , rdata = RD_SOA ns email 1 10800 3600 604800 3600
+  }
 
 ctype_lower = listArray (0,255) (map (BI.c2w . toLower) ['\0'..'\255']) :: UArray Word8 Word8
 

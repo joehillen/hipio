@@ -2,5 +2,6 @@ snapshot: lts-14.1
 packages:
 - .
 extra-deps:
+- bloodhound-0.16.0.0@sha256:b7be3a83e7b914fbe80a9b9de29009ad60cff072f5f8d4af4ee64de8e6406d32,5508
 - log-elasticsearch-0.10.1.0
-compiler-check: newer-minor
+allow-newer: true
