@@ -10,6 +10,7 @@ maintainer:          joehillen@gmail.com
 copyright:           MIT
 extra-source-files:  README.md
 cabal-version:       >=1.10
+build-type:          Simple
 
 library
   hs-source-dirs:      src
